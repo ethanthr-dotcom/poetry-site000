@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>诗泉</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Songti SC", "STSong", "Source Han Serif SC", "Noto Serif SC", "SimSun", "宋体", serif;
+      background: #f4f1e8;
+      color: #2f2a24;
+    }
+    .page {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 20px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 34px;
+      margin: 0 0 8px;
+      font-weight: 600;
+      letter-spacing: 4px;
+    }
+    .subtitle {
+      text-align: center;
+      color: #746b61;
+      margin-bottom: 28px;
+    }
+    .controls, .card {
+      background: rgba(255,255,255,.82);
+      border: 1px solid #ddd4c7;
+      border-radius: 16px;
+      box-shadow: 0 8px 26px rgba(70,55,35,.08);
+    }
+    .controls {
+      padding: 18px;
+      margin-bottom: 22px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #665d54;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cfc4b6;
+      border-radius: 9px;
+      font-size: 15px;
+      background: #fff;
+    }
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 16px;
+      cursor: pointer;
+      background: #4f5f4a;
+      color: white;
+    }
+    button:hover { opacity: .92; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .tip {
+      font-size: 13px;
+      color: #756c62;
+      margin-top: 10px;
+      line-height: 1.6;
+    }
+    .card {
+      padding: 42px 28px;
+      min-height: 360px;
+      text-align: center;
+    }
+    .title {
+      font-size: 30px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .meta {
+      color: #766d63;
+      margin-bottom: 28px;
+      font-size: 16px;
+    }
+    .content {
+      max-width: 650px;
+      margin: 0 auto;
+      font-family: "STKaiti", "KaiTi", "Kaiti SC", "Songti SC", "STSong", "SimSun", serif;
+      font-size: 23px;
+      line-height: 2;
+      white-space: pre-wrap;
+    }
+    .category {
+      margin-top: 30px;
+      font-size: 13px;
+      color: #958a7e;
+    }
+    .status {
+      padding-top: 100px;
+      color: #766d63;
+      line-height: 1.8;
+    }
+    .error {
+      color: #a3382f;
+      font-size: 16px;
+    }
+    @media (max-width: 650px) {
+      .row { grid-template-columns: 1fr; }
+      .page { padding: 24px 12px; }
+      .card { padding: 30px 18px; }
+      .content { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>诗泉</h1>
+    <div class="subtitle">本地古诗词浏览器</div>
+
+    <section class="controls">
+      <div class="row">
+        <div>
+          <label for="author">作者（可留空）</label>
+          <input id="author" placeholder="例如：李白">
+        </div>
+        <div>
+          <label for="dynasty">朝代（可留空）</label>
+          <input id="dynasty" placeholder="例如：唐">
+        </div>
+        <div>
+          <label for="type">体裁（可留空）</label>
+          <input id="type" placeholder="例如：五言绝句">
+        </div>
+      </div>
+      <button id="randomButton" type="button">随机显示一首诗</button>
+      <div class="tip">
+        共收录 37 万余首古诗词，按需加载，点击即可随机抽取一首。
+      </div>
+    </section>
+
+    <section class="card" id="card">
+      <div class="status">正在加载诗词库……</div>
+    </section>
+  </main>
+
+  <script>
+    // 全局索引：{ total, chunks: [{ file, count, dynasty, authors[], types[] }] }
+    let INDEX = null;
+    let TOTAL = 0;
+    // 已加载分块的内存缓存：file -> 诗词数组
+    const chunkCache = new Map();
+
+    const $ = (id) => document.getElementById(id);
+    const button = $("randomButton");
+    const card = $("card");
+    const authorInput = $("author");
+    const dynastyInput = $("dynasty");
+    const typeInput = $("type");
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function showStatus(message, isError) {
+      card.innerHTML =
+        '<div class="status' + (isError ? " error" : "") + '">' +
+        escapeHtml(message) +
+        "</div>";
+    }
+
+    function renderPoem(poem) {
+      const title = poem.t ?? "";
+      const author = poem.a ?? "";
+      const dynasty = poem.d ?? "";
+      const type = poem.y ?? "";
+      const content = poem.c ?? "";
+      const meta = [dynasty, author].filter(Boolean).join(" · ");
+      card.innerHTML =
+        '<div class="title">' + escapeHtml(title || "无题") + "</div>" +
+        '<div class="meta">' + escapeHtml(meta) + "</div>" +
+        '<div class="content">' + escapeHtml(content || "未找到正文") + "</div>" +
+        (type ? '<div class="category">体裁：' + escapeHtml(type) + "</div>" : "");
+    }
+
+    // 按 count 加权随机选择一个元素
+    function weightedRandom(items) {
+      const total = items.reduce((s, c) => s + c.count, 0);
+      let r = Math.random() * total;
+      for (const item of items) {
+        r -= item.count;
+        if (r < 0) return item;
+      }
+      return items[items.length - 1];
+    }
+
+    // 加载分块数据（带内存缓存）
+    async function loadChunk(file) {
+      if (chunkCache.has(file)) return chunkCache.get(file);
+      const res = await fetch("data/" + file);
+      if (!res.ok) throw new Error("分块数据加载失败：" + file);
+      const poems = await res.json();
+      chunkCache.set(file, poems);
+      return poems;
+    }
+
+    // 根据筛选条件过滤 chunks（用 chunk 级元数据做粗筛）
+    function filterChunks(author, dynasty, type) {
+      let chunks = INDEX.chunks;
+      if (dynasty) {
+        chunks = chunks.filter((c) => c.dynasty === dynasty);
+      }
+      if (author) {
+        chunks = chunks.filter(
+          (c) => Array.isArray(c.authors) && c.authors.some((a) => a.trim() === author)
+        );
+      }
+      if (type) {
+        chunks = chunks.filter(
+          (c) => Array.isArray(c.types) && c.types.some((t) => t.trim() === type)
+        );
+      }
+      return chunks;
+    }
+
+    // 在单首诗层面匹配全部条件（精确匹配，去空格）
+    function matchPoem(poem, author, dynasty, type) {
+      if (author && (poem.a ?? "").trim() !== author) return false;
+      if (dynasty && (poem.d ?? "").trim() !== dynasty) return false;
+      if (type && (poem.y ?? "").trim() !== type) return false;
+      return true;
+    }
+
+    // Fisher–Yates 洗牌
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    async function loadRandomPoem() {
+      button.disabled = true;
+      button.textContent = "正在读取……";
+
+      const author = authorInput.value.trim();
+      const dynasty = dynastyInput.value.trim();
+      const type = typeInput.value.trim();
+
+      try {
+        if (!INDEX) {
+          showStatus("诗词库尚未加载完成，请稍候……");
+          return;
+        }
+
+        const candidates = filterChunks(author, dynasty, type);
+        if (!candidates.length) {
+          showStatus("未找到匹配条件的诗", true);
+          return;
+        }
+
+        // 首选按 count 加权随机；若无匹配诗，依次尝试其它候选分块（安全网）
+        const first = weightedRandom(candidates);
+        const rest = shuffle(candidates.filter((c) => c.file !== first.file));
+        const order = [first].concat(rest);
+        const maxTries = Math.min(order.length, 8);
+
+        for (let i = 0; i < maxTries; i++) {
+          const chunk = order[i];
+          const poems = await loadChunk(chunk.file);
+          const matched = poems.filter((p) => matchPoem(p, author, dynasty, type));
+          if (matched.length) {
+            const poem = matched[Math.floor(Math.random() * matched.length)];
+            renderPoem(poem);
+            return;
+          }
+        }
+        showStatus("未找到匹配条件的诗", true);
+      } catch (err) {
+        showStatus("读取失败：" + (err && err.message ? err.message : err), true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "随机显示一首诗";
+      }
+    }
+
+    async function loadIndex() {
+      showStatus("正在加载诗词库……");
+      try {
+        const res = await fetch("data/index.json");
+        if (!res.ok) throw new Error("索引加载失败 (HTTP " + res.status + ")");
+        INDEX = await res.json();
+        TOTAL = (INDEX && INDEX.total) || 0;
+        showStatus(
+          "共收录 " + TOTAL.toLocaleString("zh-CN") + " 首诗，点击下方按钮随机抽取"
+        );
+      } catch (err) {
+        showStatus(
+          "诗词库加载失败：" + (err && err.message ? err.message : err),
+          true
+        );
+      }
+    }
+
+    button.addEventListener("click", loadRandomPoem);
+
+    // 页面加载：先加载索引，再自动随机显示一首诗（按需加载分块，不预下载全部）
+    (async () => {
+      await loadIndex();
+      if (INDEX) {
+        await loadRandomPoem();   // 显示首诗（按需加载所在分块并缓存）
+      }
+    })();
+  </script>
+</body>
+</html>
